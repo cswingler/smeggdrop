@@ -4,7 +4,7 @@ use Modern::Perl    '2012';
 
 use Shittybot::Log  ':log';
 use Shittybot::IRC;
-use Data::Dump      qw/pp/;
+use Data::Dump      'ddx';
 
 use Moose;
 
@@ -26,9 +26,12 @@ sub BUILD {
 	
 	# Register callbacks
 	my $irc     = Shittybot::IRC->new(client    => $self);
-	for my $event (qw/registered channel_add channel_remove channel_change
-		channel_nickmode_update channel_topic join part kick nick_change
-		away_status_change ctcp_ping ctcp_version quit publicmsg error/) {
+	# This gets all user defined methods in Shittybot::IRC, letting us quickly
+	# build a list of events we support and register callbacks for them
+	my @events  = map {$_->name} grep {ref($_) eq 'Moose::Meta::Method'}
+		grep {!Moose::Object->can($_->name)} Shittybot::IRC->meta->get_all_methods;
+	for my $event (@events) {
+			log_debug{"Registering callback for $event"};
 			$client->reg_cb($event  => sub {shift; $irc->$event(@_) });
 	}
 	
