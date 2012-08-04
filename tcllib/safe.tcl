@@ -21,6 +21,12 @@ namespace eval safe {
 		set ret [safe invokehidden set {*}$args];
 		return $ret;
 	}
+
+	proc _secret_unset args {
+		log "Secret unset invoked with $args";
+		set ret [safe invokehidden unset {*}$args];
+		return $ret;
+	}
 	
 	# Pretty simple, this creates a 'safe' command
 	# we can use for all future interpreter messing about
@@ -35,7 +41,7 @@ namespace eval safe {
 	foreach cmd $hidden_cmds {
 		safe hide $cmd;
 		log "Setting cmd $cmd alias to safe::_secret_$cmd";
-		safe alias set safe::_secret_$cmd;
+		safe alias $cmd safe::_secret_$cmd;
 	}
 
 	# Commands which are not allowed at all
