@@ -12,50 +12,10 @@ use Moose;
 use AnyEvent::IRC::Client;
 #use AnyEvent::Socket;
 
-sub BUILD {
-	my $self    = shift;
-	my $c       = $self->network_config;
-
-	log_debug {"Starting IRC Client for '" . $self->network . "'"};
-
-	# Create and set the client attribute
-	# TODO: create abstracted send methods so the actual client object
-	# is irrelevant
-	my $client  = AnyEvent::IRC::Client->new();
-	$self->c($client);
-	
-	# Register callbacks
-	my $irc     = Shittybot::IRC->new(client    => $self);
-	# This gets all user defined methods in Shittybot::IRC, letting us quickly
-	# build a list of events we support and register callbacks for them
-	my @events  = map {$_->name} grep {ref($_) eq 'Moose::Meta::Method'}
-		grep {!Moose::Object->can($_->name)} Shittybot::IRC->meta->get_all_methods;
-	for my $event (@events) {
-			log_debug{"Registering callback for $event"};
-			$client->reg_cb($event  => sub {shift; $irc->$event(@_) });
-	}
-	
-	# Connect to server
-	$client->connect($c->{address}, $c->{port}, {
-		nick        => $c->{nickname} || 'Shittybot',
-		user        => $c->{username} || 'shit',
-		real        => $c->{realname} || 'Write a conf, moron',
-		password    => $c->{password} || undef,
-		timeout     => $c->{timeout}  || 30,
-	});
-}
-
-## hash of channel => \@logs
-#has 'logs' => (
-#    is => 'rw',
-#    isa => 'HashRef',
-#    lazy => 1,
-#    default => sub { {} },
-#);
-#
-has 'c' => (
+has 'irc' => (
 	is          => 'rw',
 	isa         => 'AnyEvent::IRC::Client',
+	builder     => '_build_irc',
 );
 has 'config' => (
     is          => 'ro',
@@ -82,10 +42,56 @@ has 'states' => (
 	isa         => 'HashRef',
 	required    => 1,
 );
+
+sub BUILD {
+	my $self    = shift;
+	my $c       = $self->network_config;
+
+	log_debug {"Starting IRC Client for '" . $self->network . "'"};
+
+	# Load our actual IRC handling module and assign the triggers
+	my $irc     = Shittybot::IRC->new(
+		client      => $self,
+		triggers    => $c->{triggers},
+	);
+
+	# This gets all user defined methods in Shittybot::IRC, letting us quickly
+	# build a list of events we support and register callbacks for them
+	my @events  = map {$_->name} grep {ref($_) eq 'Moose::Meta::Method'}
+		grep {!Moose::Object->can($_->name)} Shittybot::IRC->meta->get_all_methods;
+
+	# Now we have a list of callbacks we can register for them
+	for my $event (@events) {
+			log_debug{"Registering callback for $event"};
+			$self->irc->reg_cb($event  => sub {shift; $irc->$event(@_) });
+	}
+	
+	# Connect to server
+	$self->irc->connect($c->{address}, $c->{port}, {
+		nick        => $c->{nickname} || 'Shittybot',
+		user        => $c->{username} || 'shit',
+		real        => $c->{realname} || 'Write a conf, moron',
+		password    => $c->{password} || undef,
+		timeout     => $c->{timeout}  || 30,
+	});
+}
+
+sub _build_irc {
+	AnyEvent::IRC::Client->new;
+}
+
+## hash of channel => \@logs
+#has 'logs' => (
+#    is => 'rw',
+#    isa => 'HashRef',
+#    lazy => 1,
+#    default => sub { {} },
+#);
+#
 #
 #has 'tcl' => (
 #    is => 'ro',
-#    isa => 'Shittybot::TCL',
+\#    isa => 'Shittybot::TCL',
 #    lazy_build => 1,
 #    handles => [qw/ safe_eval /],
 #);
