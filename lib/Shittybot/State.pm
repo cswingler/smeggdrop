@@ -20,7 +20,7 @@ has 'interpreter' => (
 	is      => 'ro',
 	isa     => 'Tcl',
 	writer  => '_set_interpreter',
-	builder => '_init_tcl',
+	builder => '_build_tcl',
 );
 
 sub BUILD {
@@ -29,18 +29,34 @@ sub BUILD {
 	log_debug{"Created State object"};
 	# TODO:
 	# load state and fork workers
+	$self->interpreter->EvalFile('tcllib/init.tcl');
 }
 
-sub _init_tcl {
+sub _build_tcl {
 	my $self    = shift;
 
 	# TODO:
 	# start the damn interpreter
 	my $interp  = Tcl->new();
 	log_debug{"Starting interpreter"};
-	$interp->EvalFile('tcllib/init.tcl');
+
+	$interp->export_to_tcl(
+		namespace   => '',
+		subs        => {
+			readlog => sub { $self->_tcl_log(@_) },
+		},
+	);
 
 	return $interp;
+}
+
+sub _tcl_log {
+	my $self    = shift;
+	my $log     = $self->interpreter->GetVar('log', Tcl::GLOBAL_ONLY);
+
+	for my $line (@$log) {
+		log_debug{"Tcl: $line"};
+	}
 }
 
 sub run {
