@@ -7,7 +7,8 @@ namespace eval safe {
 	variable network;   # Which network they are on
 	
 	proc _build_interp {} {
-		interp create -safe safe
+		interp create -safe safe;
+		safe recursionlimit 10;
 	}
 
 	proc run args {
@@ -19,11 +20,10 @@ namespace eval safe {
 
 		if {$ret != 0} {
 			set result [list "Error: $result\n$details"];
-			rcs::diff_reset;
-		} {
-			set change [rcs::diff];
-			set result [list $result [join $change "\n"]];
 		}
+
+		set change [rcs::diff];
+		set result [list $result [join $change "\n"]];
 		return $result;
 	}
 
@@ -52,6 +52,14 @@ namespace eval safe {
 	foreach cmd $disallowed_cmds {
 		log "Hiding command $cmd";
 		safe hide $cmd;
+	}
+
+	# Set existing variables and procs as protected
+	foreach var [safe invokehidden info vars *] {
+		lappend rcs::protected_vars $var;
+	}
+	foreach proc [safe invokehidden info commands] {
+		lappend rcs::protected_procs $proc;
 	}
 }
 

@@ -3,7 +3,7 @@ namespace eval rcs {
 	# of safety stuff for shittybot
 	# TODO: Strip this out so it does rcs only
 
-	# Changes made
+	# Changes made to variables and procs etc
 	# TODO: Change to array
 	variable changes        {};
 	# These variables store lists or arrays referring to
@@ -21,6 +21,10 @@ namespace eval rcs {
 	variable namespace_add   {};
 	variable namespace_del   {};
 	
+	variable protected_procs {};
+	variable protected_vars  {};
+	variable protected_namespaces {};
+
 	# Diff should collect the list of changes and check
 	# any variables that are listed to produce a state delta
 	# to pass to other interpreters
@@ -54,6 +58,7 @@ namespace eval rcs {
 		variable namespace_add;
 		variable namespace_del;
 
+		unset var_check;
 		array set var_check {};
 		set var_add         {};
 		set var_del         {};
@@ -72,6 +77,23 @@ namespace eval rcs {
 		lappend changes "Deleted array variable $name";
 	}
 
+	proc proc_changed {name {old {}} {new {}}} {
+		variable changes;
+
+		if {$name eq {}} { return; }
+
+		if {$old ne {} && $new ne {}} {
+			log "Changed proc $name from $old to $new";
+			lappend changes "Changed proc $name from $old to $new";
+		} elseif {$new ne {}} {
+			log "Created proc $name: $new";
+			lappend changes "Created proc $name: $new";
+		} {
+			log "Deleted proc $name";
+			lappend changes "Deleted proc $name";
+		}
+	}
+
 	proc var_changed {name {old {}}} {
 		variable changes;
 
@@ -80,11 +102,13 @@ namespace eval rcs {
 			if {$old ne {} && $old ne $new} {
 				log "Changed $name from $old to $new";
 				lappend changes "Changed $name from $old to $new";
-			} elseif {$old eq {}} {
+				return;
+			}
+			if {$old eq {}} {
 				log "Created $name variable: $new";
 				lappend changes "Created $name variable: $new";
 			}
-		} {
+		} elseif {$old ne {}} {
 			log "Variable $name deleted";
 			lappend changes "Variable $name deleted";
 		}
@@ -162,13 +186,16 @@ namespace eval rcs {
 		# Check to see if this is a global we are interested in
 		if {$level eq "#0" || $level == [safe invokehidden info level]} {
 			# Iterate over instances of upvar and mark them
+			log "Got global variables to test";
 			while {[llength $args]} {
 				set vars    [lrange $args 0 1];
 				set varname [lindex $vars 0];
 				set args    [lreplace $args 0 1];
+				log "Vars: $vars";
+				log "Varname: $varname";
 
 				# Global variable
-				if {[safe invokehidden info exists $varname]} {
+				if {[safe eval "uplevel $level {info exists $varname}"]} {
 					check_var $varname;
 					append ret [safe invokehidden upvar $level {*}$vars];
 				} {
@@ -176,6 +203,79 @@ namespace eval rcs {
 				}
 			}
 		}
+		return $ret;
+	}
+
+	proc _proc args {
+		variable protected_procs;
+		log "Proc called with args $args";
+
+		set procname    [lindex $args 0];
+		if {[lsearch -exact $protected_procs $procname] != -1} {
+			safe eval "error {Proc $procname is protected}";
+			return;
+		}
+
+		set oldargs {};
+		set oldbody {};
+		set newargs {};
+		set newbody {};
+		if {[safe eval {lsearch -exact [info procs]} "{$procname}"] != -1} {
+			set oldargs [safe invokehidden info args $procname];
+			set oldbody [safe invokehidden info body $procname];
+		}
+		set ret [safe invokehidden proc {*}$args];
+		if {[safe eval {lsearch -exact [info procs]} "{$procname}"] != -1} {
+			set newargs [safe invokehidden info args $procname];
+			set newbody [safe invokehidden info body $procname];
+		}
+		proc_changed $procname [list $oldargs $oldbody] [list $newargs $newbody];
+		return $ret;
+	}
+	
+	proc _rename args {
+		variable protected_procs;
+		log "Rename called with args $args";
+
+		set old [lindex $args 0];
+		set new [lindex $args 1];
+
+		if {[lsearch -exact $protected_procs $old]  != -1} {
+			safe eval "error {Proc $old is protected}";
+			return;
+		}
+
+		if {[safe eval {lsearch -exact [info procs]} "{$old}"] == -1} {
+			safe eval "error {Proc $old doesn't exist?}";
+			return;
+		}
+
+		set oldargs {};
+		set oldbody {};
+		set newargs {};
+		set newbody {};
+		if {[safe eval {lsearch -exact [info procs]} "{$old}"] != -1} {
+			set oldargs [safe invokehidden info args $old];
+			set oldbody [safe invokehidden info body $old];
+		}
+		proc_changed $old [list $oldargs $oldbody] [list $newargs $newbody];
+
+		if {[safe eval {lsearch -exact [info procs]} "{$new}"] != -1} {
+			set oldargs [safe invokehidden info args $new];
+			set oldbody [safe invokehidden info body $new];
+		} {
+			set oldargs {};
+			set oldbody {};
+		}
+
+		set ret [safe invokehidden rename {*}$args];
+
+		if {[safe eval {lsearch -exact [info procs]} "{$new}"] != -1} {
+			set newargs [safe invokehidden info args $new];
+			set newbody [safe invokehidden info body $new];
+		}
+		
+		proc_changed $new [list $oldargs $oldbody] [list $newargs $newbody];
 		return $ret;
 	}
 	
