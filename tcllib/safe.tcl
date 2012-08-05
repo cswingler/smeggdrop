@@ -13,44 +13,54 @@ namespace eval safe {
 	proc run args {
 		variable command;
 		set result [safe eval $command];
+		# TODO: Uncomment below
+		# set change [rcs::diff];
+		# log "Change is: $change"
 		return $result;
 	}
 
-	proc _secret_set args {
-		log "Secret set invoked with $args";
-		set ret [safe invokehidden set {*}$args];
-		return $ret;
+	proc test args {
+		log [namespace current]
+		log [uplevel namespace current]
+		log [info vars]
+		log [info vars ::safe]
 	}
-
-	proc _secret_unset args {
-		log "Secret unset invoked with $args";
-		set ret [safe invokehidden unset {*}$args];
-		return $ret;
-	}
-	
 	# Pretty simple, this creates a 'safe' command
 	# we can use for all future interpreter messing about
 	_build_interp;
+	safe alias test safe::test;
 
 	# These are lists of commands to hide and replace with
 	# an alias to this namespace, so they may be watched
 	variable hidden_cmds [list \
-		append dict info interp lappend lassign linsert \
-		lreplace lset namespace proc rename set unset \
+		array append dict info interp lappend lassign \
+		namespace global upvar proc rename set unset \
 	];
 	foreach cmd $hidden_cmds {
 		safe hide $cmd;
-		log "Setting cmd $cmd alias to safe::_secret_$cmd";
-		safe alias $cmd safe::_secret_$cmd;
+		log "Setting cmd $cmd alias to rcs::_$cmd";
+		safe alias $cmd rcs::_$cmd;
 	}
 
 	# Commands which are not allowed at all
 	variable disallowed_cmds [list \
 		chan eof fblocked fcopy fileevent flush gets \
-		package pid read seek tell trace \
+		package pid puts read seek tell trace \
 	];
 	foreach cmd $disallowed_cmds {
 		log "Hiding command $cmd";
 		safe hide $cmd;
+	}
+}
+
+# A global unknown handler checks for any undefined commands
+# and permits them without filtering if an alias does not exist
+proc unknown args {
+	if {[regexp {^rcs::_(\w+)$} [lindex $args 0] match procname]} {
+		set args [lrange $args 1 end];
+		set ret [safe invokehidden $procname {*}$args];
+		return $ret;
+	} {
+		return "Unknown: $args";
 	}
 }

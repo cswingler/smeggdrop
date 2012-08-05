@@ -72,9 +72,10 @@ sub run {
 		$result  = $self->interpreter->Eval('safe::run');
 	} catch {
 		$result  = "Error: $_";
+		$result .= "\nResult: " . ddx($self->interpreter->result);
 	}
 
-	log_debug{ddx($result)};
+	log_debug{$result};
 	return $result;
 }
 

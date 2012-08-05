@@ -10,5 +10,8 @@ proc log args {
 }
 log "TCL Started";
 
+
+# Set up revision control
+source "$ROOT_PATH/rcs.tcl"
 # Create safe interpreter
 source "$ROOT_PATH/safe.tcl"
