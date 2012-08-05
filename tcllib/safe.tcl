@@ -12,28 +12,30 @@ namespace eval safe {
 
 	proc run args {
 		variable command;
-		set result [safe eval $command];
-		# TODO: Uncomment below
-		# set change [rcs::diff];
-		# log "Change is: $change"
+		set result {};
+
+		log "Running command"
+		set ret [catch {safe eval $command} result details];
+
+		if {$ret != 0} {
+			set result [list "Error: $result\n$details"];
+			rcs::diff_reset;
+		} {
+			set change [rcs::diff];
+			set result [list $result [join $change "\n"]];
+		}
 		return $result;
 	}
 
-	proc test args {
-		log [namespace current]
-		log [uplevel namespace current]
-		log [info vars]
-		log [info vars ::safe]
-	}
 	# Pretty simple, this creates a 'safe' command
 	# we can use for all future interpreter messing about
 	_build_interp;
-	safe alias test safe::test;
 
 	# These are lists of commands to hide and replace with
-	# an alias to this namespace, so they may be watched
+	# an alias to the rcs namespace, so they may be watched
+	# for changes to variables, procs, namespaces
 	variable hidden_cmds [list \
-		array append dict info interp lappend lassign \
+		array append dict info lappend lassign \
 		namespace global upvar proc rename set unset \
 	];
 	foreach cmd $hidden_cmds {
@@ -45,7 +47,7 @@ namespace eval safe {
 	# Commands which are not allowed at all
 	variable disallowed_cmds [list \
 		chan eof fblocked fcopy fileevent flush gets \
-		package pid puts read seek tell trace \
+		interp package pid puts read seek tell trace \
 	];
 	foreach cmd $disallowed_cmds {
 		log "Hiding command $cmd";

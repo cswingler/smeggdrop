@@ -67,16 +67,18 @@ sub run {
 	log_debug{"Running command $command on state " . $self->name};
 
 	$self->interpreter->SetVar('safe::command', $command);
-	my $result;
+	my @result;
 	try {
-		$result  = $self->interpreter->Eval('safe::run');
+		@result  = $self->interpreter->Eval('safe::run');
 	} catch {
-		$result  = "Error: $_";
-		$result .= "\nResult: " . ddx($self->interpreter->result);
-	}
+		$result[0]  = "Error: $_";
+	};
 
-	log_debug{$result};
-	return $result;
+	if (@result) {
+		my $text    = join "\n", @result;
+		log_debug{"Result from exec:\n########################\n@result\n#######################\n$text\n######################"};
+		return $text;
+	}
 }
 
 

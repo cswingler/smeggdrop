@@ -114,7 +114,7 @@ sub output {
 	my $channel = shift;
 	my $msg     = shift;
 
-	return unless ($msg);
+	return unless (length($msg) && $msg !~ /^\s*$/);
 
 	$msg =~ s/\001ACTION /\0777ACTION /g;
 	$msg =~ s/[\000-\001]/ /g;
