@@ -71,10 +71,26 @@ namespace eval rcs {
 		set changes         {};
 	}
 
-	proc array_deleted {name} {
-		variable changes;
+	proc stack_check {name lambda {args {}}} {
+		log "Checking stack level of $name";
 
-		lappend changes "Deleted array variable $name";
+		# Get the interpreter's current stack level and determine
+		# whether unqualified variables are global are not.
+		set level [safe invokehidden info level];
+		log "Stack level: $level";
+		if {$level != 0 && ![regexp {::} $name]} {
+			# We should just pass this through as it is a lexical
+			# variable.
+			return [apply $lambda {*}$args];
+		}
+	}
+
+	proc var_name {name} {
+		# Make the variable name fully qualified
+		if {![regexp {^::} $name]} {
+			set name "::$name";
+		}
+		return $name;
 	}
 
 	proc proc_changed {name {old {}} {new {}}} {
@@ -94,25 +110,67 @@ namespace eval rcs {
 		}
 	}
 
-	proc var_changed {name {old {}}} {
+	proc var_changed {name lambda {args {}}} {
 		variable changes;
+		log "Checking variable $name with values $args";
+
+		set old {};
+		set new {};
+
+		if {[safe invokehidden info exists $name]} {
+			set old [safe invokehidden set $name];
+		}
+
+		set ret [apply $lambda {*}$args];
 
 		if {[safe invokehidden info exists $name]} {
 			set new [safe invokehidden set $name];
-			if {$old ne {} && $old ne $new} {
-				log "Changed $name from $old to $new";
-				lappend changes "Changed $name from $old to $new";
-				return;
-			}
-			if {$old eq {}} {
-				log "Created $name variable: $new";
-				lappend changes "Created $name variable: $new";
-			}
-		} elseif {$old ne {}} {
-			log "Variable $name deleted";
-			lappend changes "Variable $name deleted";
 		}
+
+		if {$old eq $new} {
+			return;
+		} elseif {$old ne {} && $new ne {}} {
+			lappend changes "Variable $name changed from $old to $new";
+		} elseif {$old ne {}} {
+			lappend changes "Variable $name deleted";
+		} else {
+			lappend changes "Variable $name created as $new";
+		}
+
+		return $ret;
 	}
+
+	# Determine what the lambda function changes
+	proc arr_changed {name lambda {args {}}} {
+		variable changes;
+		log "Checking array $name with values $args";
+
+		set old {};
+		set new {};
+		
+		if {[safe invokehidden array exists $name]} {
+			set old [safe invokehidden array get $name];
+		}
+
+		set ret [apply $lambda {*}$args];
+
+		if {[safe invokehidden array exists $name]} {
+			set new [safe invokehidden array get $name];
+		}
+		
+		if {$old eq $new} {
+			return;
+		} elseif {$old ne {} && $new ne {}} {
+			lappend changes "Array $name changed from $old to $new";
+		} elseif {$old ne {}} {
+			lappend changes "Array $name deleted";
+		} else {
+			lappend changes "Array $name created as $new";
+		}
+
+		return $ret;
+	}
+		
 
 	# Add the variable and its current contents to the
 	# list of variables to check after execution
@@ -129,6 +187,37 @@ namespace eval rcs {
 			set var_check($name) $body;
 		}
 	}
+
+	proc _array args {
+		log "array called with args $args";
+
+		set cmd     [lindex $args 0];
+		set name    [lindex $args 1];
+		set lambda  {x {safe invokehidden array {*}$x}};
+
+		switch $cmd {
+			"set" {
+				if {[set ret [stack_check $name $lambda $args]] ne {}} {
+					return $ret;
+				} {
+					set name [var_name $name];
+					return [arr_changed     $name $lambda $args];
+				}
+			}
+			"unset" {
+				if {[set ret [stack_check $name $lambda $args]] ne {}} {
+					return $ret;
+				} {
+					set name [var_name $name];
+					return [arr_changed     $name $lambda $args];
+				}
+			}
+			default {
+				return [safe invokehidden array {*}$args];
+			}
+		}
+	}
+
 
 	# Tracking the variable assignments for global
 	# and upvar is likely to be too much work for us
@@ -199,7 +288,7 @@ namespace eval rcs {
 					check_var $varname;
 					append ret [safe invokehidden upvar $level {*}$vars];
 				} {
-					safe eval "error \"can't read \\\"$varname\\\": no such variable\"";
+					safe eval error "can't read {$varname}: no such variable";
 				}
 			}
 		}
@@ -282,79 +371,56 @@ namespace eval rcs {
 	proc _lappend args {
 		log "lappend called with args $args";
 
-		set varname [lindex $args 0];
-		set varbody {};
+		set name    [lindex $args 0];
+		set lambda  {x {safe invokehidden lappend {*}$x}};
 
-		# Get the interpreter's current stack level and determine
-		# whether unqualified variables are global are not.
-		set level [safe invokehidden info level];
-		log "Stack level: $level";
-		if {$level != 0 && ![regexp {::} $varname]} {
-			# We should just pass this through as it is a lexical
-			# variable.
-			set ret [safe invokehidden lappend {*}$args];
+		if {[set ret [stack_check $name $lambda $args]] ne {}} {
 			return $ret;
+		} {
+			set name [var_name $name];
+			return [var_changed $name $lambda $args];
 		}
-
-		# Check if it already exists
-		if {[safe invokehidden info exists $varname]} {
-			# Variable exists, get its contents
-			set varbody [safe invokehidden set $varname];
-		}
-
-		set ret [safe invokehidden lappend {*}$args];
-		var_changed $varname $varbody;
-		return $ret;
 	}
 
 	proc _set args {
 		log "Set called with args: $args";
 
-		set varname [lindex $args 0];
-		set varval  {};
+		set name    [lindex $args 0];
+		set lambda  {x {safe invokehidden set {*}$x}};
 
-		# Get the interpreter's current stack level and determine
-		# whether unqualified variables are global are not.
-		set level [safe invokehidden info level];
-		log "Stack level: $level";
-		if {$level != 0 && ![regexp {::} $varname]} {
-			# We should just pass this through as it is a lexical
-			# variable.
-			set ret [safe invokehidden set {*}$args];
+		if {[set ret [stack_check $name $lambda $args]] ne {}} {
 			return $ret;
+		} {
+			set name [var_name $name];
+			return [var_changed $name $lambda $args];
 		}
-
-		if {[safe invokehidden info exists $varname]} {
-			# If the variable already exists, get the current value
-			set varval [safe invokehidden set $varname];
-		}
-
-		set ret [safe invokehidden set {*}$args];
-		var_changed $varname $varval;
-		return $ret;
 	}
-
+	
+	# For unset, we can't use the generic stack_check and
+	# var_changed mechanism we normally do, because unset returns
+	# an empty string as a successful result, so we check manually
 	proc _unset args {
 		log "Secret unset invoked with $args";
 
-		set ret {};
 		foreach var $args {
 			log "Unsetting $var";
-			if {[safe invokehidden array exists $var]} {
-				# We delete every array element so we need to generate
-				# events for this
-				foreach key [safe invokehidden array names $var] {
-					log "Array key $var ($key) $var\($key\)";
-					set varbody [safe invokehidden set "$var\($key\)"];
-					# TODO: ugly, fix plz
-					safe invokehidden unset "$var\($key\)";
-					var_changed "$var\($key\)" $varbody;
+
+			set lambda  {x {safe invokehidden unset {*}$x}};
+
+			set level [safe invokehidden info level];
+			if {$level != 0 && ![regexp {::} $var]} {
+				# We should just pass this through as it is a lexical
+				# variable.
+				apply $lambda {*}$var;
+			} {
+				set name [var_name $var];
+				if {[safe invokehidden array exists $name]} {
+					arr_changed $name $lambda $name;
+				} {
+					var_changed $name $lambda $name;
 				}
-				array_deleted $var;
 			}
-			append ret [safe invokehidden unset $var];
 		}
-		return $ret;
 	}
 
 	proc _info args {

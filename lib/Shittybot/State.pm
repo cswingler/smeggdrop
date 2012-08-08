@@ -76,7 +76,7 @@ sub run {
 
 	if (@result) {
 		my $text    = join "\n", @result;
-		log_debug{"Result from exec:\n########################\n@result\n#######################\n$text\n######################"};
+		log_debug{"Result from exec:\n$text"};
 		return $text;
 	}
 }
