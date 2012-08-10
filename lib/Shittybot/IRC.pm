@@ -127,7 +127,7 @@ sub output {
 
 	if ($#output > $limit) {
 		my $count   = scalar @output;
-		@output     = @output[0..($#output-1)];
+		@output     = @output[0..($limit-1)];
 		push @output, "Error: Output truncated to $limit lines of $count total";
 	}
 

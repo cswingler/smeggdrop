@@ -14,15 +14,26 @@ namespace eval safe {
 	proc run args {
 		variable command;
 		set result {};
+		set change {};
+		
+		log "Running command";
+		set start [clock clicks -milliseconds];
+		lappend change "Starting execution at ${start}ms";
 
-		log "Running command"
 		set ret [catch {safe eval $command} result details];
+
+		set execdone [clock clicks -milliseconds];
+		lappend change "Beginning diff after [expr $execdone-$start]ms";
 
 		if {$ret != 0} {
 			set result [list "Error: $result\n$details"];
 		}
 
-		set change [rcs::diff];
+		lappend change [rcs::diff];
+
+		set done [clock clicks -milliseconds];
+		lappend change "Finished diff after [expr $done-$execdone]ms";
+
 		set result [list $result [join $change "\n"]];
 		return $result;
 	}
@@ -56,10 +67,10 @@ namespace eval safe {
 
 	# Set existing variables and procs as protected
 	foreach var [safe invokehidden info vars *] {
-		lappend rcs::protected_vars $var;
+		lappend rcs::protected_vars     [rcs::full_name $var];
 	}
 	foreach proc [safe invokehidden info commands] {
-		lappend rcs::protected_procs $proc;
+		lappend rcs::protected_procs    [rcs::full_name $proc];
 	}
 }
 
@@ -71,6 +82,6 @@ proc unknown args {
 		set ret [safe invokehidden $procname {*}$args];
 		return $ret;
 	} {
-		return "Unknown: $args";
+		error "Unknown: $args";
 	}
 }

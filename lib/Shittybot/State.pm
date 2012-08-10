@@ -29,7 +29,12 @@ sub BUILD {
 	log_debug{"Created State object"};
 	# TODO:
 	# load state and fork workers
-	$self->interpreter->EvalFile('tcllib/init.tcl');
+	my @result;
+	try {
+		@result  = $self->interpreter->EvalFile('tcllib/init.tcl');
+	} catch {
+		die "Huh: $_\n@result";
+	};
 }
 
 sub _build_tcl {
@@ -38,6 +43,7 @@ sub _build_tcl {
 	# TODO:
 	# start the damn interpreter
 	my $interp  = Tcl->new();
+	$interp->Init();
 	log_debug{"Starting interpreter"};
 
 	$interp->export_to_tcl(

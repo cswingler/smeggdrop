@@ -6,20 +6,15 @@ namespace eval rcs {
 	# Changes made to variables and procs etc
 	# TODO: Change to array
 	variable changes        {};
+
 	# These variables store lists or arrays referring to
-	# modifications in the current tcl execution
+	# modifications in the current tcl execution. We use a
+	# list and array so that we can check for the existence
+	# of array elements to check whether the value was
+	# originally null or a 0 length string (thanks TCL!)
 	variable var_check;
-	array set var_check {};
-	variable var_add         {};
-	variable var_del         {};
-	variable var_change      {};
-
-	variable proc_add        {};
-	variable proc_del        {};
-	variable proc_change     {};
-
-	variable namespace_add   {};
-	variable namespace_del   {};
+	array set var_check     {};
+	variable var_check_list {};
 	
 	variable protected_procs {};
 	variable protected_vars  {};
@@ -30,13 +25,33 @@ namespace eval rcs {
 	# to pass to other interpreters
 	proc diff {} {
 		variable var_check;
+		variable var_check_list;
+
 		variable changes;
 
-		log "Running diff: [array get var_check]";
+		log "Running diff: $var_check_list";
 
-		foreach var [array names var_check] {
+		foreach var $var_check_list {
 			log "Checking variable $var";
-			var_changed $var $var_check($var);
+			if {[info exists var_check($var)]} {
+				log "Info existed!"
+				set old $var_check($var);
+			}
+			if {[safe invokehidden info exists $var]} {
+				set new [safe invokehidden set $var];
+			}
+
+			if {[info exists old] && [info exists new] && $old eq $new} {
+				return;
+			} elseif {[info exists old] && [info exists new]} {
+				lappend changes "Variable $var changed from $old to $new";
+			} elseif {[info exists old]} {
+				lappend changes "Variable $var deleted";
+			} elseif {![info exists new]} {
+				lappend changes "Empty variable $var created";
+			} else {
+				lappend changes "Variable $var created as $new";
+			}
 		}
 
 		set changed $changes;
@@ -47,27 +62,11 @@ namespace eval rcs {
 	proc diff_reset {} {
 		variable changes;
 		variable var_check;
-		variable var_add;
-		variable var_del;
-		variable var_change;
-
-		variable proc_add;
-		variable proc_del;
-		variable proc_change;
-
-		variable namespace_add;
-		variable namespace_del;
+		variable var_check_list;
 
 		unset var_check;
 		array set var_check {};
-		set var_add         {};
-		set var_del         {};
-		set var_change      {};
-		set proc_add        {};
-		set proc_del        {};
-		set proc_change     {};
-		set namespace_add   {};
-		set namespace_del   {};
+		set var_check_list  {};
 		set changes         {};
 	}
 
@@ -85,7 +84,7 @@ namespace eval rcs {
 		}
 	}
 
-	proc var_name {name} {
+	proc full_name {name} {
 		# Make the variable name fully qualified
 		if {![regexp {^::} $name]} {
 			set name "::$name";
@@ -114,9 +113,6 @@ namespace eval rcs {
 		variable changes;
 		log "Checking variable $name with values $args";
 
-		set old {};
-		set new {};
-
 		if {[safe invokehidden info exists $name]} {
 			set old [safe invokehidden set $name];
 		}
@@ -127,12 +123,14 @@ namespace eval rcs {
 			set new [safe invokehidden set $name];
 		}
 
-		if {$old eq $new} {
+		if {[info exists old] && [info exists new] && $old eq $new} {
 			return;
-		} elseif {$old ne {} && $new ne {}} {
+		} elseif {[info exists old] && [info exists new]} {
 			lappend changes "Variable $name changed from $old to $new";
-		} elseif {$old ne {}} {
+		} elseif {[info exists old]} {
 			lappend changes "Variable $name deleted";
+		} elseif {![info exists new]} {
+			lappend changes "Empty variable $name created";
 		} else {
 			lappend changes "Variable $name created as $new";
 		}
@@ -140,14 +138,10 @@ namespace eval rcs {
 		return $ret;
 	}
 
-	# Determine what the lambda function changes
 	proc arr_changed {name lambda {args {}}} {
 		variable changes;
 		log "Checking array $name with values $args";
 
-		set old {};
-		set new {};
-		
 		if {[safe invokehidden array exists $name]} {
 			set old [safe invokehidden array get $name];
 		}
@@ -158,12 +152,15 @@ namespace eval rcs {
 			set new [safe invokehidden array get $name];
 		}
 		
-		if {$old eq $new} {
+		if {[info exists old] && [info exists new] && \
+		  $old eq $new} {
 			return;
-		} elseif {$old ne {} && $new ne {}} {
+		} elseif {[info exists old] && [info exists new]} {
 			lappend changes "Array $name changed from $old to $new";
-		} elseif {$old ne {}} {
+		} elseif {[info exists old]} {
 			lappend changes "Array $name deleted";
+		} elseif {![info exists new]} {
+			lappend changes "Empty array $name created";
 		} else {
 			lappend changes "Array $name created as $new";
 		}
@@ -176,19 +173,26 @@ namespace eval rcs {
 	# list of variables to check after execution
 	proc check_var {name} {
 		variable var_check;
+		variable var_check_list;
 
-		set body {};
+		# Grab the current contents
 		if {[safe invokehidden info exists $name]} {
 			set body [safe invokehidden set $name];
 		}
 
-		if {![info exists var_check($name)]} {
+		# Check whether the variable is already in
+		# the list of ones to check
+		if {[lsearch -exact $var_check_list $name] == -1} {
 			log "Adding $name to var_check";
-			set var_check($name) $body;
+			lappend var_check_list $name;
+			if {[info exists body]} {
+				set var_check($name) $body;
+			}
 		}
 	}
 
 	proc _array args {
+		variable protected_vars;
 		log "array called with args $args";
 
 		set cmd     [lindex $args 0];
@@ -197,18 +201,26 @@ namespace eval rcs {
 
 		switch $cmd {
 			"set" {
-				if {[set ret [stack_check $name $lambda $args]] ne {}} {
+				set ret [stack_check $name $lambda $args];
+				if {[info exists ret]} {
 					return $ret;
 				} {
-					set name [var_name $name];
+					set name [full_name $name];
+					if {[lsearch -exact $protected_vars $name] != -1} {
+						safe eval error "{Var $name is protected}";
+					}
 					return [arr_changed     $name $lambda $args];
 				}
 			}
 			"unset" {
-				if {[set ret [stack_check $name $lambda $args]] ne {}} {
+				set ret [stack_check $name $lambda $args];
+				if {[info exists ret]} {
 					return $ret;
 				} {
-					set name [var_name $name];
+					set name [full_name $name];
+					if {[lsearch -exact $protected_vars $name] != -1} {
+						safe eval error "{Var $name is protected}";
+					}
 					return [arr_changed     $name $lambda $args];
 				}
 			}
@@ -238,7 +250,6 @@ namespace eval rcs {
 		foreach var $args {
 			# Prepend a global namespace if unqualified
 			if {![regexp {^::} $var]} {set var "::$var"}
-			# Fetch the current contents of the variable
 
 			# Add it to the list of variables to check
 			check_var $var;
@@ -278,18 +289,14 @@ namespace eval rcs {
 			log "Got global variables to test";
 			while {[llength $args]} {
 				set vars    [lrange $args 0 1];
-				set varname [lindex $vars 0];
+				set varname [full_name [lindex $vars 0]];
 				set args    [lreplace $args 0 1];
 				log "Vars: $vars";
 				log "Varname: $varname";
 
 				# Global variable
-				if {[safe eval "uplevel $level {info exists $varname}"]} {
-					check_var $varname;
-					append ret [safe invokehidden upvar $level {*}$vars];
-				} {
-					safe eval error "can't read {$varname}: no such variable";
-				}
+				check_var $varname;
+				append ret [safe invokehidden upvar $level {*}$vars];
 			}
 		}
 		return $ret;
@@ -374,24 +381,30 @@ namespace eval rcs {
 		set name    [lindex $args 0];
 		set lambda  {x {safe invokehidden lappend {*}$x}};
 
-		if {[set ret [stack_check $name $lambda $args]] ne {}} {
+		set ret [stack_check $name $lambda $args];
+		if {[info exists ret]} {
 			return $ret;
 		} {
-			set name [var_name $name];
+			set name [full_name $name];
 			return [var_changed $name $lambda $args];
 		}
 	}
 
 	proc _set args {
+		variable protected_vars;
 		log "Set called with args: $args";
 
 		set name    [lindex $args 0];
 		set lambda  {x {safe invokehidden set {*}$x}};
 
-		if {[set ret [stack_check $name $lambda $args]] ne {}} {
+		set ret [stack_check $name $lambda $args];
+		if {[info exists ret]} {
 			return $ret;
 		} {
-			set name [var_name $name];
+			set name [full_name $name];
+			if {[lsearch -exact $protected_vars $name] != -1} {
+				safe eval error "{Var $name is protected}";
+			}
 			return [var_changed $name $lambda $args];
 		}
 	}
@@ -400,6 +413,7 @@ namespace eval rcs {
 	# var_changed mechanism we normally do, because unset returns
 	# an empty string as a successful result, so we check manually
 	proc _unset args {
+		variable protected_vars;
 		log "Secret unset invoked with $args";
 
 		foreach var $args {
@@ -413,7 +427,10 @@ namespace eval rcs {
 				# variable.
 				apply $lambda {*}$var;
 			} {
-				set name [var_name $var];
+				set name [full_name $var];
+				if {[lsearch -exact $protected_vars $name] != -1} {
+					safe eval error "{Var $name is protected}";
+				}
 				if {[safe invokehidden array exists $name]} {
 					arr_changed $name $lambda $name;
 				} {
@@ -424,7 +441,7 @@ namespace eval rcs {
 	}
 
 	proc _info args {
-		log_debug{"Info called with $args"};
+		log "Info called with $args";
 		if {[lindex $args 0] ne "hostname"} {
 			set ret [safe invokehidden info {*}$args];
 			return $ret;
